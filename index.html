@@ -29,6 +29,15 @@
   .big{font-size:40px;font-weight:bold;color:#fff}
   .rec{color:#7dff9a;font-weight:bold;font-size:18px;animation:blink .6s steps(2) infinite}
   @keyframes blink{50%{opacity:.3}}
+  #boostBtn{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    width:150px;height:58px;border-radius:29px;border:3px solid #ffd27a;background:rgba(20,10,4,.65);
+    overflow:hidden;touch-action:none;display:flex;align-items:center;justify-content:center;
+    font-weight:bold;font-size:18px;color:#fff;text-shadow:2px 2px 0 #000;letter-spacing:2px;cursor:pointer}
+  #boostFill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#ff7a1a,#ffd04a);opacity:.85}
+  #boostBtn span{position:relative}
+  #boostBtn.on{border-color:#fff;box-shadow:0 0 18px #ffb02a}
+  #boostBtn.full{animation:glow .5s ease-in-out infinite alternate}
+  @keyframes glow{to{box-shadow:0 0 16px #ffd04a}}
   .key{display:inline-block;border:1px solid #ffd27a;border-radius:3px;padding:0 5px;margin:0 1px;font-size:12px;color:#ffd27a}
 </style>
 </head>
@@ -36,6 +45,8 @@
 <div id="wrap">
   <div id="game">
     <canvas id="cv"></canvas>
+
+    <div id="boostBtn" class="hidden"><div id="boostFill"></div><span>ブースト</span></div>
 
     <div id="title" class="ov">
       <h1>つるはし下降<span style="font-size:18px">（仮）</span></h1>
@@ -46,11 +57,12 @@
         ・耐久：<span class="sw" style="background:#8b5a2b"></span>土1<span class="sw" style="background:#7c7c86"></span>石2<span class="sw" style="background:#6f6f7a;box-shadow:inset 3px 3px 0 #e0a070"></span>鉄3<span class="sw" style="background:#3a3446"></span>硬岩5<br>
         ・<span class="sw" style="background:#ff6a00"></span><b style="color:#ff8a3a">マグマ</b>：触れたら即ゲームオーバー<br>
         ・<span class="sw" style="background:#231942;border-color:#9b7bff"></span><b style="color:#b9a2ff">バリア</b>：削れない。横に避けよう<br>
-        ・50mごとにレベルアップ：仲間が増え、<br>&nbsp;&nbsp;木→石→鉄→金→ダイヤ→炎 に進化
+        ・50mごとにレベルアップ：仲間が増え、<br>&nbsp;&nbsp;木→石→鉄→金→ダイヤ→炎 に進化<br>
+        ・ブロックを壊すと<b>ブーストゲージ</b>が溜まる。<br>&nbsp;&nbsp;押している間、超高速で掘り進む
       </div>
       <div class="box">
-        <b>PC</b>：<span class="key">←</span><span class="key">→</span> または <span class="key">A</span><span class="key">D</span><br>
-        <b>スマホ</b>：画面の左／右を長押し、またはスワイプ
+        <b>PC</b>：<span class="key">←</span><span class="key">→</span> または <span class="key">A</span><span class="key">D</span>　ブースト：<span class="key">Space</span>長押し／<span class="key">↓</span><br>
+        <b>スマホ</b>：画面の左／右を長押し、またはスワイプ<br>&nbsp;&nbsp;ブーストは画面下のボタンを押している間
       </div>
       <div class="sub">ベスト深度：<span id="tBest">0</span> m</div>
       <button id="btnStart">スタート</button>
@@ -80,6 +92,8 @@ const MAXFALL = 16;
 const PW = 0.62, PH = 0.62; // ツルハシの当たり判定サイズ（マス）
 const MOVE = 5.5;          // 左右移動速度（マス/秒）
 const MAX_ALLIES = 12;
+const BOOST_MAX = 100, BOOST_DRAIN = 28;    // ゲージ最大値・発動中の消費量（/秒）
+const BOOST_GRAV = 1.7, BOOST_DMG = 2.2, BOOST_FALL = 22;
 const T_EMPTY = 0, T_DIRT = 1, T_STONE = 2, T_IRON = 3, T_HARD = 4, T_BARRIER = 5, T_MAGMA = 6, T_WALL = 9;
 const MAXHP = [0, 1, 2, 3, 5, 0, 0];
 const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","Yu Gothic",Meiryo,sans-serif';
@@ -271,10 +285,11 @@ const rows = new Map(); // 行番号 -> {t, hp, fl}
 let genRow = 0, nextBlock = START_ROW, pendingDouble = false;
 
 function pickMat(d) {
-  const wD = Math.max(0.12, 1 - d / 140);
-  const wS = 0.35 + Math.min(0.6, d / 180);
-  const wI = d > 15 ? Math.min(0.5, (d - 15) / 200) : 0;
-  const wH = d > 45 ? Math.min(0.45, (d - 45) / 250) : 0;
+  // 0〜50mは土中心で、硬い素材を少しずつ増やす
+  const wD = Math.max(0.12, 1 - d / 170);
+  const wS = d < 50 ? 0.04 + 0.42 * (d / 50) : 0.46 + Math.min(0.5, (d - 50) / 180);
+  const wI = d > 22 ? Math.min(0.5, (d - 22) / 180) : 0;
+  const wH = d > 42 ? Math.min(0.45, (d - 42) / 240) : 0;
   let r = Math.random() * (wD + wS + wI + wH);
   if ((r -= wD) < 0) return T_DIRT;
   if ((r -= wS) < 0) return T_STONE;
@@ -288,7 +303,8 @@ function makeRow(r, noMagma) {
   const R = Math.random;
   for (let c = 0; c < COLS; c++) t[c] = (c > 0 && R() < 0.35) ? t[c - 1] : pickMat(d);
   if (d > 3 && R() < 0.12) t[Math.floor(R() * COLS)] = T_EMPTY;
-  if (d > 8 && R() < Math.min(0.55, 0.22 + d / 500)) {
+  // 2段重ねの下段（noMagma）はマグマもバリアも置かない：掘った穴の中で詰まらないように
+  if (!noMagma && d > 8 && R() < Math.min(0.55, 0.22 + d / 500)) {
     const len = 1 + Math.floor(R() * Math.min(4, 1 + d / 60)), s = Math.floor(R() * (COLS - len + 1));
     for (let c = s; c < s + len; c++) t[c] = T_BARRIER;
   }
@@ -324,14 +340,18 @@ function cellType(c, r) {
 let state = 'title';
 let p, allies, particles, debris, popups, banner;
 let camY, depth, level, time, shake, deathT, best, newRecord, flameT;
-const input = { left: false, right: false };
+let gauge = 0, boosting = false, trail = [], speedLines = [];
+const input = { left: false, right: false, boost: false, boostBtn: false };
 const pointers = new Map();
 
 try { best = parseInt(localStorage.getItem(BEST_KEY), 10) || 0; } catch (e) { best = 0; }
 
 function tier() { return Math.min(level - 1, STAGES.length - 1); }
-function bounceV() { const h = Math.max(0.95, 1.55 - 0.1 * (level - 1)); return Math.sqrt(2 * G * h); }
-function playerDmg() { return 1 + 0.35 * (level - 1); }
+// 跳ねる高さ（低いほど間隔が短い）。序盤から手応えが出るよう低めに設定
+function bounceH() { const h = Math.max(0.6, 0.85 - 0.04 * (level - 1)); return boosting ? h * 0.42 : h; }
+function grav() { return boosting ? G * BOOST_GRAV : G; }
+function bounceV() { return Math.sqrt(2 * grav() * bounceH()); }
+function playerDmg() { return (1 + 0.35 * (level - 1)) * (boosting ? BOOST_DMG : 1); }
 function allyDmg() { return 0.45 + 0.04 * level; }
 
 function reset() {
@@ -339,6 +359,7 @@ function reset() {
   p = { x: COLS / 2, y: START_ROW - 1.5, vx: 0, vy: 0, face: 1, swing: 0, dead: false };
   allies = []; particles = []; debris = []; popups = []; banner = null;
   camY = 0; depth = 0; level = 1; time = 0; shake = 0; deathT = 0; newRecord = false; flameT = 0;
+  gauge = 0; boosting = false; trail = []; speedLines = [];
   genUpTo(Math.ceil(viewH) + 8);
 }
 
@@ -354,7 +375,7 @@ function burst(x, y, n, cols, spd, life, size, grav) {
 function popup(text, x, y, col) { popups.push({ text, x, y, col, life: 0.8 }); if (popups.length > 12) popups.shift(); }
 
 // ===================== 掘削 =====================
-function damageCell(r, c, dmg) {
+function damageCell(r, c, dmg, gain = 1) {
   const row = rows.get(r); if (!row) return false;
   const t = row.t[c]; if (t === T_EMPTY || t >= T_BARRIER) return false;
   row.hp[c] -= dmg; row.fl[c] = 1;
@@ -365,6 +386,7 @@ function damageCell(r, c, dmg) {
     debris.push({ x: c + 0.5, y: r + 0.5, vx: (Math.random() - 0.5) * 2, vy: -2 - Math.random() * 2,
       rot: 0, vr: (Math.random() - 0.5) * 8, type: t, v: (r * 7 + c * 13) % 3, life: 1.1 });
     if (debris.length > 30) debris.shift();
+    if (!boosting) gauge = Math.min(BOOST_MAX, gauge + (4 + 2.5 * MAXHP[t]) * gain); // 壊すとゲージが溜まる
     burst(c + 0.5, r + 0.5, 8, [P.light, P.base, P.dark, P.spec], 6, 0.6, 0.12, 30);
     return true;
   }
@@ -405,7 +427,7 @@ function land(r) {
   }
   const broken = damageCell(r, target, playerDmg());
   shake = Math.max(shake, broken ? 0.45 : 0.25);
-  if (broken && solids === 1) p.vy = 3;   // 足場が消えたので落下
+  if (broken && solids === 1) p.vy = boosting ? 9 : 3;   // 足場が消えたので落下
   else p.vy = -bounceV();
 }
 
@@ -413,6 +435,9 @@ function updatePlayer(dt) {
   let dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   if (pointers.size) { let last; for (const v of pointers.values()) last = v; dir = last.dir; }
   if (dir) p.face = dir;
+  const want = input.boost || input.boostBtn;
+  boosting = want && gauge > 0;
+  if (boosting) gauge = Math.max(0, gauge - BOOST_DRAIN * dt);
   p.vx += (dir * MOVE - p.vx) * Math.min(1, dt * 14);
 
   // 横移動
@@ -428,7 +453,7 @@ function updatePlayer(dt) {
     }
   }
   // 縦移動
-  p.vy = Math.min(p.vy + G * dt, MAXFALL);
+  p.vy = Math.min(p.vy + grav() * dt, boosting ? BOOST_FALL : MAXFALL);
   p.y += p.vy * dt;
   {
     const l = p.x - PW / 2 + 1e-4, rr = p.x + PW / 2 - 1e-4;
@@ -532,7 +557,7 @@ function updateAllies(dt) {
     if (dist > 1e-4) { a.x += dx / dist * step; a.y += dy / dist * step; }
     if (a.tc >= 0 && dist < 0.2 && a.cd <= 0) {
       a.cd = cdBase; a.hop = 1;
-      if (damageCell(a.tr, a.tc, allyDmg())) a.tc = -1;
+      if (damageCell(a.tr, a.tc, allyDmg(), 0.5)) a.tc = -1;
     }
   }
 }
@@ -552,6 +577,18 @@ function updateFx(dt) {
   for (let i = popups.length - 1; i >= 0; i--) { popups[i].life -= dt; popups[i].y -= dt * 1.2; if (popups[i].life <= 0) popups.splice(i, 1); }
   if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
   shake = Math.max(0, shake - dt * 2.5);
+  // ブースト演出：残像とスピード線
+  if (boosting && state === 'play') {
+    trail.push({ x: p.x, y: p.y, a: playerAngle() });
+    if (trail.length > 6) trail.shift();
+    for (let i = 0; i < 2; i++) speedLines.push({ x: Math.random() * COLS, y: camY + viewH * (0.3 + Math.random() * 0.8),
+      len: 1.5 + Math.random() * 2.5, life: 0.25, max: 0.25 });
+  } else if (trail.length) trail.shift();
+  for (let i = speedLines.length - 1; i >= 0; i--) {
+    const q = speedLines[i]; q.life -= dt; q.y -= dt * 40;
+    if (q.life <= 0) speedLines.splice(i, 1);
+  }
+  if (speedLines.length > 60) speedLines.splice(0, speedLines.length - 60);
   for (const row of rows.values()) for (let c = 0; c < COLS; c++) if (row.fl[c] > 0) row.fl[c] = Math.max(0, row.fl[c] - dt * 6);
 }
 
@@ -596,6 +633,12 @@ function drawPick(spr, cx, cy, size, ang) {
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
   ctx.drawImage(spr, -size / 2, -size / 2 + off, size, size);
   ctx.restore();
+}
+
+function playerAngle() {
+  const bv = bounceV();
+  const wind = p.vy < 0 ? Math.min(1, -p.vy / bv) * 0.55 : 0;
+  return Math.PI - p.face * wind + Math.max(-0.35, Math.min(0.35, p.vx * 0.05)) + p.swing * 0.12 * p.face;
 }
 
 function render() {
@@ -654,11 +697,24 @@ function render() {
   }
 
   // プレイヤー
+  // スピード線
+  if (speedLines.length) {
+    ctx.fillStyle = '#fff6d8';
+    const lw = Math.max(1, Math.round(U * 0.04));
+    for (const q of speedLines) {
+      ctx.globalAlpha = 0.35 * (q.life / q.max);
+      ctx.fillRect(Math.round(q.x * U), Math.round((q.y - camY) * U), lw, q.len * U);
+    }
+    ctx.globalAlpha = 1;
+  }
   if (!p.dead) {
-    const bv = bounceV();
-    const wind = p.vy < 0 ? Math.min(1, -p.vy / bv) * 0.55 : 0;
-    const ang = Math.PI - p.face * wind + Math.max(-0.35, Math.min(0.35, p.vx * 0.05)) + p.swing * 0.12 * p.face;
-    drawPick(spr, p.x * U, (p.y - camY) * U, U * 1.3, ang);
+    for (let i = 0; i < trail.length; i++) { // 残像
+      const q = trail[i];
+      ctx.globalAlpha = 0.08 + 0.32 * (i / trail.length);
+      drawPick(spr, q.x * U, (q.y - camY) * U, U * 1.3, q.a);
+    }
+    ctx.globalAlpha = 1;
+    drawPick(spr, p.x * U, (p.y - camY) * U, U * 1.3, playerAngle());
   }
 
   // パーティクル
@@ -688,6 +744,12 @@ function render() {
     gr.addColorStop(0, 'rgba(255,60,0,0)'); gr.addColorStop(1, `rgba(255,60,0,${a})`);
     ctx.fillStyle = gr; ctx.fillRect(0, CH * 0.6, CW, CH * 0.4);
   }
+  if (boosting) {
+    const gr = ctx.createLinearGradient(0, 0, CW, 0);
+    gr.addColorStop(0, 'rgba(255,170,40,0.22)'); gr.addColorStop(0.15, 'rgba(255,170,40,0)');
+    gr.addColorStop(0.85, 'rgba(255,170,40,0)'); gr.addColorStop(1, 'rgba(255,170,40,0.22)');
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, CW, CH);
+  }
   if (state !== 'title') drawHud();
 }
 
@@ -709,6 +771,19 @@ function drawHud() {
   const prog = (depth % LEVEL_STEP) / LEVEL_STEP;
   ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(0, hh - 4 * k, CW, 4 * k);
   ctx.fillStyle = STAGES[tier()].head; ctx.fillRect(0, hh - 4 * k, CW * prog, 4 * k);
+  // ブーストゲージ
+  {
+    const gy = hh + 6 * k, gh = 10 * k, gx = pad + 52 * k, gw = CW - gx - pad - 40 * k, ratio = gauge / BOOST_MAX;
+    ctx.fillStyle = 'rgba(8,4,2,0.55)'; ctx.fillRect(0, hh, CW, gh + 12 * k);
+    ctx.textAlign = 'left'; ctx.font = `bold ${11 * k}px ${FONT}`;
+    ctx.fillStyle = boosting ? '#ffffff' : '#ffb04a'; ctx.fillText('ブースト', pad, gy + gh - 1 * k);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(gx, gy, gw, gh);
+    const full = ratio >= 1;
+    ctx.fillStyle = boosting ? '#ffffff' : full ? (Math.sin(time * 10) > 0 ? '#ffe27a' : '#ff9a2a') : '#ff8a1a';
+    ctx.fillRect(gx, gy, gw * ratio, gh);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#ffffff';
+    ctx.fillText(Math.floor(ratio * 100) + '%', CW - pad, gy + gh - 1 * k);
+  }
 
   if (banner) {
     const a = Math.min(1, banner.t * 1.5), y = CH * 0.32;
@@ -726,9 +801,11 @@ function startGame() {
   reset();
   state = 'play';
   $('title').classList.add('hidden'); $('over').classList.add('hidden');
+  boostBtn.classList.remove('hidden');
 }
 function showOver() {
   state = 'over';
+  boostBtn.classList.add('hidden'); input.boostBtn = false;
   $('oDepth').textContent = depth; $('oBest').textContent = best;
   $('oLv').textContent = 'Lv.' + level + ' ' + STAGES[tier()].name;
   $('oRec').classList.toggle('hidden', !newRecord);
@@ -741,12 +818,32 @@ $('btnRetry').addEventListener('click', startGame);
 window.addEventListener('keydown', e => {
   if (e.code === 'ArrowLeft' || e.code === 'KeyA') { input.left = true; e.preventDefault(); }
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') { input.right = true; e.preventDefault(); }
-  else if ((e.code === 'Space' || e.code === 'Enter') && (state === 'title' || state === 'over')) { e.preventDefault(); startGame(); }
+  else if ((e.code === 'Space' || e.code === 'Enter') && (state === 'title' || state === 'over')) { e.preventDefault(); if (!e.repeat) startGame(); }
+  else if ((e.code === 'Space' || e.code === 'ArrowDown' || e.code === 'KeyS') && state === 'play') { input.boost = true; e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
   if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+  else if (e.code === 'Space' || e.code === 'ArrowDown' || e.code === 'KeyS') input.boost = false;
 });
+// ブーストボタン（押している間だけ発動）
+const boostBtn = $('boostBtn'), boostFill = $('boostFill');
+boostBtn.addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation(); input.boostBtn = true;
+  try { boostBtn.setPointerCapture(e.pointerId); } catch (err) {}
+});
+const boostOff = () => { input.boostBtn = false; };
+boostBtn.addEventListener('pointerup', boostOff);
+boostBtn.addEventListener('pointercancel', boostOff);
+boostBtn.addEventListener('lostpointercapture', boostOff);
+boostBtn.addEventListener('contextmenu', e => e.preventDefault());
+let lastFill = -1, lastCls = '';
+function updateBoostBtn() {
+  const v = Math.round(gauge);
+  if (v !== lastFill) { boostFill.style.width = (v / BOOST_MAX * 100) + '%'; lastFill = v; }
+  const cls = boosting ? 'on' : gauge >= BOOST_MAX ? 'full' : '';
+  if (cls !== lastCls) { boostBtn.classList.remove('on', 'full'); if (cls) boostBtn.classList.add(cls); lastCls = cls; }
+}
 function localX(e) { return e.clientX - cv.getBoundingClientRect().left; }
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
@@ -765,7 +862,7 @@ cv.addEventListener('pointercancel', endPtr);
 cv.addEventListener('lostpointercapture', endPtr);
 cv.addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('gesturestart', e => e.preventDefault());
-window.addEventListener('blur', () => { input.left = input.right = false; pointers.clear(); });
+window.addEventListener('blur', () => { input.left = input.right = input.boost = input.boostBtn = false; pointers.clear(); });
 window.addEventListener('resize', resize);
 
 // ===================== メインループ =====================
@@ -783,7 +880,9 @@ function frame(now) {
   } else {
     updateFx(dt);
   }
+  if (state !== 'play') boosting = false;
   render();
+  updateBoostBtn();
   requestAnimationFrame(frame);
 }
 
@@ -794,7 +893,7 @@ requestAnimationFrame(frame);
 
 // テスト用フック
 window.__game = { get state() { return state; }, get depth() { return depth; }, get level() { return level; },
-  get allies() { return allies.length; }, get p() { return p; }, rows, start: startGame };
+  get allies() { return allies.length; }, get p() { return p; }, get gauge() { return gauge; }, get boosting() { return boosting; }, rows, start: startGame };
 })();
 </script>
 </body>
