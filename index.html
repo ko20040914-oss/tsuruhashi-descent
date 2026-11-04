@@ -58,7 +58,8 @@
         ・<span class="sw" style="background:#ff6a00"></span><b style="color:#ff8a3a">マグマ</b>：触れたら即ゲームオーバー<br>
         ・<span class="sw" style="background:#231942;border-color:#9b7bff"></span><b style="color:#b9a2ff">バリア</b>：削れない。横に避けよう<br>
         ・50mごとにレベルアップ：仲間が増え、<br>&nbsp;&nbsp;木→石→鉄→金→ダイヤ→炎 に進化<br>
-        ・ブロックを壊すと<b>ブーストゲージ</b>が溜まる。<br>&nbsp;&nbsp;押している間、超高速で掘り進む
+        ・ブロックを壊すと<b>ブーストゲージ</b>が溜まる。<br>&nbsp;&nbsp;押している間、超高速で掘り進む<br>
+        ・<b style="color:#ffe27a">ブースト中はマグマ無敵！</b>マグマも掘り進める<br>&nbsp;&nbsp;（ブーストが切れた瞬間に触れているとアウト）
       </div>
       <div class="box">
         <b>PC</b>：<span class="key">←</span><span class="key">→</span> または <span class="key">A</span><span class="key">D</span>　ブースト：<span class="key">Space</span>長押し／<span class="key">↓</span><br>
@@ -168,7 +169,7 @@ function rng(seed) { // mulberry32
 }
 
 // ===================== アセット生成 =====================
-let tiles = {}, backTiles = [], glowTile = null, cracks = [], sprites = [];
+let aura = null, tiles = {}, backTiles = [], glowTile = null, cracks = [], sprites = [];
 
 function makeBlockTile(type, seed, ts) {
   const c = mk(ts, ts), x = c.getContext('2d'), g = 8, ps = ts / g, R = rng(seed), P = PAL[type];
@@ -213,6 +214,15 @@ function makeGlow(ts) {
   const gr = x.createLinearGradient(0, 0, 0, ts);
   gr.addColorStop(0, 'rgba(255,120,0,0)'); gr.addColorStop(1, 'rgba(255,110,0,0.55)');
   x.fillStyle = gr; x.fillRect(0, 0, ts, ts);
+  return c;
+}
+
+function makeAura(sz) {
+  const c = mk(sz, sz), x = c.getContext('2d'), h = sz / 2;
+  const gr = x.createRadialGradient(h, h, 0, h, h, h);
+  gr.addColorStop(0, 'rgba(255,255,220,0.95)'); gr.addColorStop(0.35, 'rgba(255,200,60,0.6)');
+  gr.addColorStop(0.7, 'rgba(255,100,0,0.25)'); gr.addColorStop(1, 'rgba(255,60,0,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, sz, sz);
   return c;
 }
 
@@ -266,6 +276,7 @@ function buildAssets() {
   for (const t of [1, 2, 3, 4, 5, 6]) tiles[t] = [0, 1, 2].map(v => makeBlockTile(t, t * 1000 + v * 77 + 3, ts));
   backTiles = [0, 1, 2, 3].map(v => makeBackTile(500 + v * 31, ts));
   glowTile = makeGlow(ts);
+  aura = makeAura(Math.ceil(U * 2.4));
   cracks = [makeCrackSet(11, ts), makeCrackSet(29, ts)];
   sprites = STAGES.map(makeSprite);
 }
@@ -404,9 +415,28 @@ function touchingMagma() {
   return false;
 }
 
+function meltMagma(r, c) {
+  const row = rows.get(r); if (!row || row.t[c] !== T_MAGMA) return;
+  row.t[c] = T_EMPTY; row.hp[c] = 0; row.fl[c] = 0;
+  debris.push({ x: c + 0.5, y: r + 0.5, vx: (Math.random() - 0.5) * 2, vy: -2 - Math.random() * 2,
+    rot: 0, vr: (Math.random() - 0.5) * 8, type: T_MAGMA, v: (r * 7 + c * 13) % 3, life: 0.9 });
+  if (debris.length > 30) debris.shift();
+  burst(c + 0.5, r + 0.3, 14, ['#ffe27a', '#ffb22a', '#ff6a00', '#ffffff'], 7, 0.6, 0.12, 20);
+  if (Math.random() < 0.6) popup('ジュッ!', c + 0.5, r - 0.5, '#ffe27a');
+}
+
 function land(r) {
   const l = p.x - PW / 2, rr = p.x + PW / 2;
   const c0 = Math.floor(l + 1e-4), c1 = Math.floor(rr - 1e-4);
+  // ブースト中（無敵）はマグマを一撃で掘り抜く
+  if (boosting) {
+    let melted = 0;
+    for (let c = c0; c <= c1; c++) if (cellType(c, r) === T_MAGMA) { meltMagma(r, c); melted++; }
+    if (melted) {
+      let rest = 0; for (let c = c0; c <= c1; c++) if (cellType(c, r) !== T_EMPTY) rest++;
+      if (!rest) { p.vy = 9; p.swing = 1; shake = Math.max(shake, 0.45); return; }
+    }
+  }
   let target = -1, bestOv = -1, solids = 0;
   for (let c = c0; c <= c1; c++) {
     const t = cellType(c, r); if (t === T_EMPTY) continue;
@@ -461,7 +491,7 @@ function updatePlayer(dt) {
       const r = Math.floor(p.y + PH / 2);
       let hit = false;
       for (let c = Math.floor(l); c <= Math.floor(rr); c++) if (cellType(c, r) !== T_EMPTY) hit = true;
-      if (hit) { p.y = r - PH / 2; if (!touchingMagma()) land(r); }
+      if (hit) { p.y = r - PH / 2; if (boosting || !touchingMagma()) land(r); }
     } else if (p.vy < 0) {
       const r = Math.floor(p.y - PH / 2);
       let hit = false;
@@ -471,7 +501,17 @@ function updatePlayer(dt) {
   }
   p.swing = Math.max(0, p.swing - dt * 5);
 
-  if (touchingMagma()) { die(); return; }
+  // 無敵はブースト中だけ。切れた瞬間にマグマと触れていればアウト
+  if (!boosting && touchingMagma()) { die(); return; }
+
+  // 無敵中の炎エフェクト
+  if (boosting) {
+    for (let i = 0; i < 2; i++) {
+      const a = Math.random() * Math.PI * 2;
+      particles.push({ x: p.x + Math.cos(a) * 0.45, y: p.y + Math.sin(a) * 0.45, vx: (Math.random() - 0.5) * 0.6, vy: -2 - Math.random() * 2,
+        life: 0.3, max: 0.3, col: Math.random() < 0.5 ? '#fff2a0' : '#ffb02a', size: 0.09, g: -3 });
+    }
+  }
 
   // 炎のツルハシのエフェクト
   if (STAGES[tier()].fire) {
@@ -714,7 +754,19 @@ function render() {
       drawPick(spr, q.x * U, (q.y - camY) * U, U * 1.3, q.a);
     }
     ctx.globalAlpha = 1;
-    drawPick(spr, p.x * U, (p.y - camY) * U, U * 1.3, playerAngle());
+    const px = p.x * U, py = (p.y - camY) * U;
+    if (boosting) { // 無敵オーラ
+      const s = aura.width * (1 + 0.08 * Math.sin(time * 25));
+      ctx.globalAlpha = 0.55 + 0.25 * Math.sin(time * 18);
+      ctx.drawImage(aura, px - s / 2, py - s / 2, s, s);
+      ctx.globalAlpha = 1;
+    }
+    drawPick(spr, px, py, U * 1.3, playerAngle());
+    if (boosting && Math.sin(time * 30) > 0) { // 点滅して光る
+      ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.6;
+      drawPick(spr, px, py, U * 1.3, playerAngle());
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    }
   }
 
   // パーティクル
@@ -777,6 +829,14 @@ function drawHud() {
     ctx.fillStyle = 'rgba(8,4,2,0.55)'; ctx.fillRect(0, hh, CW, gh + 12 * k);
     ctx.textAlign = 'left'; ctx.font = `bold ${11 * k}px ${FONT}`;
     ctx.fillStyle = boosting ? '#ffffff' : '#ffb04a'; ctx.fillText('ブースト', pad, gy + gh - 1 * k);
+    if (boosting) {
+      ctx.textAlign = 'center'; ctx.font = `bold ${15 * k}px ${FONT}`;
+      ctx.lineWidth = 4 * k; ctx.strokeStyle = '#5a1c00';
+      const iy = gy + gh + 22 * k, txt = '無敵！マグマも掘れる';
+      ctx.globalAlpha = 0.75 + 0.25 * Math.sin(time * 14);
+      ctx.strokeText(txt, CW / 2, iy); ctx.fillStyle = '#ffe27a'; ctx.fillText(txt, CW / 2, iy);
+      ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.font = `bold ${11 * k}px ${FONT}`;
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(gx, gy, gw, gh);
     const full = ratio >= 1;
     ctx.fillStyle = boosting ? '#ffffff' : full ? (Math.sin(time * 10) > 0 ? '#ffe27a' : '#ff9a2a') : '#ff8a1a';
@@ -893,7 +953,8 @@ requestAnimationFrame(frame);
 
 // テスト用フック
 window.__game = { get state() { return state; }, get depth() { return depth; }, get level() { return level; },
-  get allies() { return allies.length; }, get p() { return p; }, get gauge() { return gauge; }, get boosting() { return boosting; }, rows, start: startGame };
+  get allies() { return allies.length; }, get p() { return p; }, get gauge() { return gauge; }, get boosting() { return boosting; }, rows, start: startGame,
+  setGauge(v) { gauge = v; } };
 })();
 </script>
 </body>
