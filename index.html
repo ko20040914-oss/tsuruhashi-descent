@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#120b07">
+<title>つるはし下降（仮）</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0705;overflow:hidden;
+    touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;overscroll-behavior:none;
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","Yu Gothic",Meiryo,sans-serif;color:#f4e9da}
+  #wrap{position:fixed;inset:0;display:flex;justify-content:center;align-items:flex-start}
+  #game{position:relative;overflow:hidden;background:#1a110b;box-shadow:0 0 40px #000}
+  #cv{display:block;width:100%;height:100%;touch-action:none;image-rendering:pixelated}
+  .ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(12,7,4,.80);text-align:center;padding:20px;box-sizing:border-box;gap:10px}
+  .hidden{display:none!important}
+  h1{margin:0;font-size:34px;letter-spacing:2px;color:#ffd27a;text-shadow:3px 3px 0 #6b2a0a,0 0 18px rgba(255,140,40,.45)}
+  h2{margin:0;font-size:30px;color:#ff7a3a;text-shadow:3px 3px 0 #3a0c02}
+  .sub{font-size:13px;color:#c9b39a}
+  .box{background:rgba(255,255,255,.06);border:2px solid rgba(255,210,122,.25);border-radius:6px;
+    padding:10px 14px;font-size:13px;line-height:1.7;text-align:left;max-width:330px}
+  .box b{color:#ffd27a}
+  .sw{display:inline-block;width:11px;height:11px;margin:0 3px 0 6px;vertical-align:-1px;border:1px solid #000}
+  button{font:inherit;font-size:20px;font-weight:bold;color:#2a1405;background:#ffc24a;border:none;
+    border-bottom:5px solid #b06a10;border-radius:6px;padding:12px 40px;cursor:pointer;margin-top:6px}
+  button:active{transform:translateY(3px);border-bottom-width:2px}
+  .big{font-size:40px;font-weight:bold;color:#fff}
+  .rec{color:#7dff9a;font-weight:bold;font-size:18px;animation:blink .6s steps(2) infinite}
+  @keyframes blink{50%{opacity:.3}}
+  .key{display:inline-block;border:1px solid #ffd27a;border-radius:3px;padding:0 5px;margin:0 1px;font-size:12px;color:#ffd27a}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="cv"></canvas>
+
+    <div id="title" class="ov">
+      <h1>つるはし下降<span style="font-size:18px">（仮）</span></h1>
+      <div class="sub">跳ねるツルハシで、どこまでも下へ。</div>
+      <div class="box">
+        ・ツルハシは自動で跳ねて<b>真下のブロック</b>を削る<br>
+        ・あなたの操作は<b>左右移動だけ</b><br>
+        ・耐久：<span class="sw" style="background:#8b5a2b"></span>土1<span class="sw" style="background:#7c7c86"></span>石2<span class="sw" style="background:#6f6f7a;box-shadow:inset 3px 3px 0 #e0a070"></span>鉄3<span class="sw" style="background:#3a3446"></span>硬岩5<br>
+        ・<span class="sw" style="background:#ff6a00"></span><b style="color:#ff8a3a">マグマ</b>：触れたら即ゲームオーバー<br>
+        ・<span class="sw" style="background:#231942;border-color:#9b7bff"></span><b style="color:#b9a2ff">バリア</b>：削れない。横に避けよう<br>
+        ・50mごとにレベルアップ：仲間が増え、<br>&nbsp;&nbsp;木→石→鉄→金→ダイヤ→炎 に進化
+      </div>
+      <div class="box">
+        <b>PC</b>：<span class="key">←</span><span class="key">→</span> または <span class="key">A</span><span class="key">D</span><br>
+        <b>スマホ</b>：画面の左／右を長押し、またはスワイプ
+      </div>
+      <div class="sub">ベスト深度：<span id="tBest">0</span> m</div>
+      <button id="btnStart">スタート</button>
+    </div>
+
+    <div id="over" class="ov hidden">
+      <h2>ゲームオーバー</h2>
+      <div class="sub">マグマに触れてしまった…</div>
+      <div class="sub" style="margin-top:8px">到達深度</div>
+      <div class="big"><span id="oDepth">0</span> m</div>
+      <div id="oRec" class="rec hidden">NEW RECORD!</div>
+      <div class="sub">ベスト：<span id="oBest">0</span> m ／ <span id="oLv"></span></div>
+      <button id="btnRetry">リスタート</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+(() => {
+// ===================== 定数 =====================
+const COLS = 9;            // 横のマス数
+const START_ROW = 4;       // 最初のブロック行
+const LEVEL_STEP = 50;     // 何mごとにレベルアップ
+const G = 42;              // 重力（マス/秒^2）
+const MAXFALL = 16;
+const PW = 0.62, PH = 0.62; // ツルハシの当たり判定サイズ（マス）
+const MOVE = 5.5;          // 左右移動速度（マス/秒）
+const MAX_ALLIES = 12;
+const T_EMPTY = 0, T_DIRT = 1, T_STONE = 2, T_IRON = 3, T_HARD = 4, T_BARRIER = 5, T_MAGMA = 6, T_WALL = 9;
+const MAXHP = [0, 1, 2, 3, 5, 0, 0];
+const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","Yu Gothic",Meiryo,sans-serif';
+const BEST_KEY = 'tsuruhashi_descent_best';
+
+const STAGES = [
+  { name: '木のツルハシ',   head: '#a8743e', light: '#d39a5c', dark: '#6e4a24', grip: '#7a5230', grip2: '#4f331c' },
+  { name: '石のツルハシ',   head: '#8c8c94', light: '#c4c4cc', dark: '#55555c', grip: '#7a5230', grip2: '#4f331c' },
+  { name: '鉄のツルハシ',   head: '#d6dae2', light: '#ffffff', dark: '#8a92a2', grip: '#6b4a2e', grip2: '#3f2a18' },
+  { name: '金のツルハシ',   head: '#f2c230', light: '#fff0a0', dark: '#b0820e', grip: '#5a3a22', grip2: '#3a2412' },
+  { name: 'ダイヤのツルハシ', head: '#4fe3dc', light: '#c8fffb', dark: '#168f8f', grip: '#3d3d55', grip2: '#24243a', gem: '#ffffff', fx1: '#ffffff', fx2: '#9ff6ff', big: true },
+  { name: '炎のツルハシ',   head: '#ff5a1a', light: '#ffd04a', dark: '#a01c08', grip: '#3a2626', grip2: '#1e1212', gem: '#fff4b0', fx1: '#ffd04a', fx2: '#ff7a1a', big: true, fire: true },
+];
+
+// ツルハシのドット絵（頭が上。描画時に180度回転して頭を下にする）
+const PAT_A = [
+  '................',
+  '.....LLLLLL.....',
+  '...LLHHHHHHLL...',
+  '..LHHHHHHHHHHL..',
+  '.LHHHDDSsDDHHHL.',
+  '.HHD...Ss...DHH.',
+  'LHD....Ss....DHL',
+  'HD.....Ss.....DH',
+  'D......Ss......D',
+  '.......Ss.......',
+  '.......Ss.......',
+  '.......Ss.......',
+  '.......Ss.......',
+  '.......Ss.......',
+  '.......dd.......',
+  '................',
+];
+const PAT_B = [
+  '..f...F..f...F..',
+  '.fF.LLLLLLLL.Ff.',
+  '..LLHHHHHHHHLL..',
+  '.LHHHHGGGGHHHHL.',
+  'LHHHDDGGGGDDHHHL',
+  'HHD....Ss....DHH',
+  'HD.....Ss.....DH',
+  'D......Ss......D',
+  'D......Ss......D',
+  '.......Ss.......',
+  '.......Ss.......',
+  '......wSsw......',
+  '.......Ss.......',
+  '.......Ss.......',
+  '.......dd.......',
+  '................',
+];
+
+const PAL = {
+  1: { base: '#8b5a2b', dark: '#6a4120', light: '#a8713a', spec: '#c99055', spec2: '#5a361a' },
+  2: { base: '#7c7c86', dark: '#5c5c66', light: '#9d9da8', spec: '#b5b5c0', spec2: '#4a4a52' },
+  3: { base: '#6f6f7a', dark: '#52525c', light: '#8e8e9a', spec: '#e0a070', spec2: '#f5d0a8' },
+  4: { base: '#3a3446', dark: '#272231', light: '#554d66', spec: '#6e6585', spec2: '#1b1722' },
+  5: { base: '#231942', dark: '#150f2a', light: '#9b7bff', spec: '#c9b6ff', spec2: '#4b3a8a' },
+  6: { base: '#ff6a00', dark: '#c22a00', light: '#ffb22a', spec: '#ffe27a', spec2: '#8a1500' },
+};
+
+// ===================== DOM / Canvas =====================
+const $ = id => document.getElementById(id);
+const gameEl = $('game'), cv = $('cv'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, U = 1, CW = 0, CH = 0, viewH = 1;
+
+function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+function rng(seed) { // mulberry32
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+// ===================== アセット生成 =====================
+let tiles = {}, backTiles = [], glowTile = null, cracks = [], sprites = [];
+
+function makeBlockTile(type, seed, ts) {
+  const c = mk(ts, ts), x = c.getContext('2d'), g = 8, ps = ts / g, R = rng(seed), P = PAL[type];
+  const px = (i, j, col) => { x.fillStyle = col; x.fillRect(Math.floor(i * ps), Math.floor(j * ps), Math.ceil(ps) + 1, Math.ceil(ps) + 1); };
+  if (type === T_BARRIER) {
+    for (let j = 0; j < g; j++) for (let i = 0; i < g; i++) px(i, j, R() < 0.25 ? P.dark : P.base);
+    for (let i = 1; i < g - 1; i++) { px(i, i, P.spec); px(g - 1 - i, i, P.spec); }
+    for (let i = 0; i < g; i++) { px(i, 0, P.light); px(i, g - 1, P.spec2); px(0, i, P.light); px(g - 1, i, P.spec2); }
+    px(1, 1, '#ffffff'); px(6, 1, '#ffffff'); px(1, 6, P.light); px(6, 6, P.light);
+    return c;
+  }
+  for (let j = 0; j < g; j++) for (let i = 0; i < g; i++) {
+    const r = R(); px(i, j, r < 0.2 ? P.dark : r < 0.34 ? P.light : P.base);
+  }
+  const n = type === T_IRON ? 3 : type === T_MAGMA ? 4 : 2;
+  for (let k = 0; k < n; k++) {
+    const i = 1 + Math.floor(R() * 5), j = 1 + Math.floor(R() * 5);
+    px(i, j, P.spec);
+    if (type === T_IRON) { px(i + 1, j, P.spec2); px(i, j + 1, P.spec); }
+    else if (R() < 0.5) px(i + 1, j, P.spec2);
+  }
+  if (type !== T_MAGMA) {
+    for (let i = 0; i < g; i++) { px(i, 0, P.light); px(0, i, P.light); px(i, g - 1, P.dark); px(g - 1, i, P.dark); }
+  } else {
+    for (let i = 0; i < g; i++) if (R() < 0.5) px(i, g - 1, P.spec2);
+  }
+  return c;
+}
+
+function makeBackTile(seed, ts) {
+  const c = mk(ts, ts), x = c.getContext('2d'), g = 8, ps = ts / g, R = rng(seed);
+  for (let j = 0; j < g; j++) for (let i = 0; i < g; i++) {
+    const r = R();
+    x.fillStyle = r < 0.15 ? 'rgba(0,0,0,0.30)' : r < 0.25 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.12)';
+    x.fillRect(Math.floor(i * ps), Math.floor(j * ps), Math.ceil(ps) + 1, Math.ceil(ps) + 1);
+  }
+  return c;
+}
+
+function makeGlow(ts) {
+  const c = mk(ts, ts), x = c.getContext('2d');
+  const gr = x.createLinearGradient(0, 0, 0, ts);
+  gr.addColorStop(0, 'rgba(255,120,0,0)'); gr.addColorStop(1, 'rgba(255,110,0,0.55)');
+  x.fillStyle = gr; x.fillRect(0, 0, ts, ts);
+  return c;
+}
+
+function makeCrackSet(seed, ts) {
+  const R = rng(seed), g = 16, ps = ts / g, branches = [];
+  for (let b = 0; b < 6; b++) {
+    let i = 7 + Math.floor(R() * 2), j = 7 + Math.floor(R() * 2);
+    const a = (b / 6) * Math.PI * 2 + R() * 0.8;
+    const dx = Math.cos(a), dy = Math.sin(a), len = 4 + Math.floor(R() * 5), pts = [];
+    let fx = i, fy = j;
+    for (let k = 0; k < len; k++) {
+      fx += dx + (R() - 0.5) * 0.9; fy += dy + (R() - 0.5) * 0.9;
+      pts.push([Math.max(1, Math.min(14, Math.round(fx))), Math.max(1, Math.min(14, Math.round(fy)))]);
+    }
+    branches.push(pts);
+  }
+  const set = [];
+  for (let s = 1; s <= 3; s++) {
+    const c = mk(ts, ts), x = c.getContext('2d');
+    for (let b = 0; b < s * 2; b++) for (const [i, j] of branches[b]) {
+      x.fillStyle = 'rgba(15,8,4,0.9)'; x.fillRect(Math.floor(i * ps), Math.floor(j * ps), Math.ceil(ps), Math.ceil(ps));
+      x.fillStyle = 'rgba(255,255,255,0.12)'; x.fillRect(Math.floor((i + 1) * ps), Math.floor(j * ps), Math.ceil(ps * 0.6), Math.ceil(ps));
+    }
+    set.push(c);
+  }
+  return set;
+}
+
+function makeSprite(st) {
+  const pat = st.big ? PAT_B : PAT_A;
+  const ps = Math.max(1, Math.round(U * 1.3 / 18));
+  const c = mk(18 * ps, 18 * ps), x = c.getContext('2d');
+  const map = { L: st.light, H: st.head, D: st.dark, S: st.grip, s: st.grip2, d: st.grip2, w: st.light, G: st.gem, F: st.fx1, f: st.fx2 };
+  const filled = (i, j) => j >= 0 && j < 16 && i >= 0 && i < 16 && pat[j][i] !== '.';
+  x.fillStyle = '#140a05';
+  for (let j = -1; j <= 16; j++) for (let i = -1; i <= 16; i++) {
+    if (filled(i, j)) continue;
+    const ch = (a, b) => filled(a, b) && 'FfG'.indexOf(pat[b][a]) < 0 || (filled(a, b) && pat[b][a] === 'G');
+    if (ch(i - 1, j) || ch(i + 1, j) || ch(i, j - 1) || ch(i, j + 1)) x.fillRect((i + 1) * ps, (j + 1) * ps, ps, ps);
+  }
+  for (let j = 0; j < 16; j++) for (let i = 0; i < 16; i++) {
+    const k = pat[j][i]; if (k === '.') continue;
+    x.fillStyle = map[k]; x.fillRect((i + 1) * ps, (j + 1) * ps, ps, ps);
+  }
+  return c;
+}
+
+function buildAssets() {
+  const ts = Math.max(8, Math.ceil(U));
+  tiles = {};
+  for (const t of [1, 2, 3, 4, 5, 6]) tiles[t] = [0, 1, 2].map(v => makeBlockTile(t, t * 1000 + v * 77 + 3, ts));
+  backTiles = [0, 1, 2, 3].map(v => makeBackTile(500 + v * 31, ts));
+  glowTile = makeGlow(ts);
+  cracks = [makeCrackSet(11, ts), makeCrackSet(29, ts)];
+  sprites = STAGES.map(makeSprite);
+}
+
+function resize() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  W = Math.min(vw, Math.floor(vh * 0.6)); H = vh;
+  gameEl.style.width = W + 'px'; gameEl.style.height = H + 'px';
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  CW = cv.width = Math.round(W * DPR); CH = cv.height = Math.round(H * DPR);
+  U = CW / COLS; viewH = CH / U;
+  buildAssets();
+}
+
+// ===================== ワールド =====================
+const rows = new Map(); // 行番号 -> {t, hp, fl}
+let genRow = 0, nextBlock = START_ROW, pendingDouble = false;
+
+function pickMat(d) {
+  const wD = Math.max(0.12, 1 - d / 140);
+  const wS = 0.35 + Math.min(0.6, d / 180);
+  const wI = d > 15 ? Math.min(0.5, (d - 15) / 200) : 0;
+  const wH = d > 45 ? Math.min(0.45, (d - 45) / 250) : 0;
+  let r = Math.random() * (wD + wS + wI + wH);
+  if ((r -= wD) < 0) return T_DIRT;
+  if ((r -= wS) < 0) return T_STONE;
+  if ((r -= wI) < 0) return T_IRON;
+  return T_HARD;
+}
+
+function makeRow(r, noMagma) {
+  const d = r - START_ROW + 1;
+  const t = new Uint8Array(COLS), hp = new Float32Array(COLS), fl = new Float32Array(COLS);
+  const R = Math.random;
+  for (let c = 0; c < COLS; c++) t[c] = (c > 0 && R() < 0.35) ? t[c - 1] : pickMat(d);
+  if (d > 3 && R() < 0.12) t[Math.floor(R() * COLS)] = T_EMPTY;
+  if (d > 8 && R() < Math.min(0.55, 0.22 + d / 500)) {
+    const len = 1 + Math.floor(R() * Math.min(4, 1 + d / 60)), s = Math.floor(R() * (COLS - len + 1));
+    for (let c = s; c < s + len; c++) t[c] = T_BARRIER;
+  }
+  if (!noMagma && d > 14 && R() < Math.min(0.6, 0.18 + d / 350)) {
+    const len = 1 + Math.floor(R() * Math.min(3, 1 + d / 100)), s = Math.floor(R() * (COLS - len + 1));
+    for (let c = s; c < s + len; c++) t[c] = T_MAGMA;
+  }
+  // 安全に進めるマスを最低3つ確保
+  let safe = 0; for (let c = 0; c < COLS; c++) if (t[c] < T_BARRIER) safe++;
+  while (safe < 3) { const c = Math.floor(R() * COLS); if (t[c] >= T_BARRIER) { t[c] = pickMat(d); safe++; } }
+  for (let c = 0; c < COLS; c++) hp[c] = MAXHP[t[c]];
+  return { t, hp, fl };
+}
+
+function genUpTo(rmax) {
+  while (genRow <= rmax) {
+    const r = genRow++;
+    if (r !== nextBlock) continue;
+    const lower = pendingDouble;
+    rows.set(r, makeRow(r, lower));
+    const d = r - START_ROW + 1;
+    if (!lower && d > 25 && Math.random() < 0.2) { nextBlock = r + 1; pendingDouble = true; }
+    else { pendingDouble = false; nextBlock = r + 3 + (Math.random() < 0.15 ? 1 : 0); }
+  }
+}
+
+function cellType(c, r) {
+  if (c < 0 || c >= COLS) return T_WALL;
+  const row = rows.get(r); return row ? row.t[c] : T_EMPTY;
+}
+
+// ===================== 状態 =====================
+let state = 'title';
+let p, allies, particles, debris, popups, banner;
+let camY, depth, level, time, shake, deathT, best, newRecord, flameT;
+const input = { left: false, right: false };
+const pointers = new Map();
+
+try { best = parseInt(localStorage.getItem(BEST_KEY), 10) || 0; } catch (e) { best = 0; }
+
+function tier() { return Math.min(level - 1, STAGES.length - 1); }
+function bounceV() { const h = Math.max(0.95, 1.55 - 0.1 * (level - 1)); return Math.sqrt(2 * G * h); }
+function playerDmg() { return 1 + 0.35 * (level - 1); }
+function allyDmg() { return 0.45 + 0.04 * level; }
+
+function reset() {
+  rows.clear(); genRow = 0; nextBlock = START_ROW; pendingDouble = false;
+  p = { x: COLS / 2, y: START_ROW - 1.5, vx: 0, vy: 0, face: 1, swing: 0, dead: false };
+  allies = []; particles = []; debris = []; popups = []; banner = null;
+  camY = 0; depth = 0; level = 1; time = 0; shake = 0; deathT = 0; newRecord = false; flameT = 0;
+  genUpTo(Math.ceil(viewH) + 8);
+}
+
+// ===================== エフェクト =====================
+function burst(x, y, n, cols, spd, life, size, grav) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = spd * (0.3 + Math.random() * 0.7);
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - spd * 0.4, life, max: life,
+      col: cols[(Math.random() * cols.length) | 0], size: size * (0.6 + Math.random() * 0.6), g: grav });
+  }
+  if (particles.length > 380) particles.splice(0, particles.length - 380);
+}
+function popup(text, x, y, col) { popups.push({ text, x, y, col, life: 0.8 }); if (popups.length > 12) popups.shift(); }
+
+// ===================== 掘削 =====================
+function damageCell(r, c, dmg) {
+  const row = rows.get(r); if (!row) return false;
+  const t = row.t[c]; if (t === T_EMPTY || t >= T_BARRIER) return false;
+  row.hp[c] -= dmg; row.fl[c] = 1;
+  const P = PAL[t];
+  burst(c + 0.5, r, 4, [P.light, P.base, P.dark], 4, 0.45, 0.09, 30);
+  if (row.hp[c] <= 0.001) {
+    row.t[c] = T_EMPTY; row.hp[c] = 0; row.fl[c] = 0;
+    debris.push({ x: c + 0.5, y: r + 0.5, vx: (Math.random() - 0.5) * 2, vy: -2 - Math.random() * 2,
+      rot: 0, vr: (Math.random() - 0.5) * 8, type: t, v: (r * 7 + c * 13) % 3, life: 1.1 });
+    if (debris.length > 30) debris.shift();
+    burst(c + 0.5, r + 0.5, 8, [P.light, P.base, P.dark, P.spec], 6, 0.6, 0.12, 30);
+    return true;
+  }
+  return false;
+}
+
+// ===================== プレイヤー =====================
+function touchingMagma() {
+  const e = 0.05, l = p.x - PW / 2 - e, rr = p.x + PW / 2 + e, t = p.y - PH / 2 - e, b = p.y + PH / 2 + e;
+  for (let r = Math.floor(t); r <= Math.floor(b); r++) for (let c = Math.floor(l); c <= Math.floor(rr); c++) {
+    if (cellType(c, r) !== T_MAGMA) continue;
+    const ox = Math.min(rr, c + 1) - Math.max(l, c), oy = Math.min(b, r + 1) - Math.max(t, r);
+    if (ox > 0.035 && oy > 0.035) return true;
+  }
+  return false;
+}
+
+function land(r) {
+  const l = p.x - PW / 2, rr = p.x + PW / 2;
+  const c0 = Math.floor(l + 1e-4), c1 = Math.floor(rr - 1e-4);
+  let target = -1, bestOv = -1, solids = 0;
+  for (let c = c0; c <= c1; c++) {
+    const t = cellType(c, r); if (t === T_EMPTY) continue;
+    solids++;
+    const ov = Math.min(rr, c + 1) - Math.max(l, c) + (c === Math.floor(p.x) ? 0.5 : 0);
+    if (t !== T_WALL && ov > bestOv) { bestOv = ov; target = c; }
+  }
+  p.swing = 1;
+  const t = target >= 0 ? cellType(target, r) : T_WALL;
+  if (t === T_BARRIER || t === T_WALL) {
+    p.vy = -bounceV() * 1.05;
+    if (t === T_BARRIER) {
+      burst(p.x, r, 6, ['#c9b6ff', '#ffffff', '#9b7bff'], 5, 0.35, 0.08, 10);
+      if (Math.random() < 0.5) popup('カキン!', p.x, r - 0.6, '#c9b6ff');
+    }
+    shake = Math.max(shake, 0.25);
+    return;
+  }
+  const broken = damageCell(r, target, playerDmg());
+  shake = Math.max(shake, broken ? 0.45 : 0.25);
+  if (broken && solids === 1) p.vy = 3;   // 足場が消えたので落下
+  else p.vy = -bounceV();
+}
+
+function updatePlayer(dt) {
+  let dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  if (pointers.size) { let last; for (const v of pointers.values()) last = v; dir = last.dir; }
+  if (dir) p.face = dir;
+  p.vx += (dir * MOVE - p.vx) * Math.min(1, dt * 14);
+
+  // 横移動
+  p.x += p.vx * dt;
+  {
+    const t = p.y - PH / 2, b = p.y + PH / 2 - 1e-4;
+    if (p.vx > 0) {
+      const c = Math.floor(p.x + PW / 2);
+      for (let r = Math.floor(t); r <= Math.floor(b); r++) if (cellType(c, r) !== T_EMPTY) { p.x = c - PW / 2 - 1e-4; p.vx = 0; break; }
+    } else if (p.vx < 0) {
+      const c = Math.floor(p.x - PW / 2);
+      for (let r = Math.floor(t); r <= Math.floor(b); r++) if (cellType(c, r) !== T_EMPTY) { p.x = c + 1 + PW / 2 + 1e-4; p.vx = 0; break; }
+    }
+  }
+  // 縦移動
+  p.vy = Math.min(p.vy + G * dt, MAXFALL);
+  p.y += p.vy * dt;
+  {
+    const l = p.x - PW / 2 + 1e-4, rr = p.x + PW / 2 - 1e-4;
+    if (p.vy > 0) {
+      const r = Math.floor(p.y + PH / 2);
+      let hit = false;
+      for (let c = Math.floor(l); c <= Math.floor(rr); c++) if (cellType(c, r) !== T_EMPTY) hit = true;
+      if (hit) { p.y = r - PH / 2; if (!touchingMagma()) land(r); }
+    } else if (p.vy < 0) {
+      const r = Math.floor(p.y - PH / 2);
+      let hit = false;
+      for (let c = Math.floor(l); c <= Math.floor(rr); c++) if (cellType(c, r) !== T_EMPTY) hit = true;
+      if (hit) { p.y = r + 1 + PH / 2; p.vy = 0; }
+    }
+  }
+  p.swing = Math.max(0, p.swing - dt * 5);
+
+  if (touchingMagma()) { die(); return; }
+
+  // 炎のツルハシのエフェクト
+  if (STAGES[tier()].fire) {
+    flameT -= dt;
+    if (flameT <= 0) {
+      flameT = 0.035;
+      particles.push({ x: p.x + (Math.random() - 0.5) * 0.6, y: p.y + 0.25, vx: (Math.random() - 0.5) * 0.8, vy: -1.5 - Math.random() * 1.5,
+        life: 0.4, max: 0.4, col: Math.random() < 0.5 ? '#ffd04a' : '#ff6a1a', size: 0.1, g: -2 });
+    }
+  }
+
+  // 深度・レベル
+  const d = Math.max(0, Math.floor(p.y + PH / 2 - START_ROW));
+  if (d > depth) {
+    depth = d;
+    const nl = 1 + Math.floor(depth / LEVEL_STEP);
+    while (level < nl) levelUp();
+  }
+}
+
+function levelUp() {
+  const before = tier();
+  level++;
+  let sub = '';
+  if (allies.length < MAX_ALLIES) {
+    const a = { x: p.x, y: p.y - 0.5, cd: 0.5, tr: 0, tc: -1, hop: 0, search: 0, id: allies.length };
+    allies.push(a); sub = '仲間ツルハシ +1';
+  }
+  if (tier() !== before) sub = STAGES[tier()].name + 'に進化！' + (sub ? '  ' + sub : '');
+  else if (!sub) sub = '削るスピードアップ！';
+  banner = { text: 'LEVEL UP!  Lv.' + level, sub, t: 2.2 };
+  const st = STAGES[tier()];
+  burst(p.x, p.y, 26, [st.light, st.head, '#ffffff', '#ffd27a'], 8, 0.9, 0.12, 6);
+}
+
+function die() {
+  if (p.dead) return;
+  p.dead = true; state = 'dying'; deathT = 0; shake = 0.8;
+  burst(p.x, p.y, 40, ['#ff6a00', '#ffd04a', '#ffffff', '#c22a00', STAGES[tier()].head], 9, 1.0, 0.13, 20);
+  if (depth > best) { best = depth; newRecord = true; try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) {} }
+}
+
+// ===================== 仲間ツルハシ =====================
+function findTarget(a, taken) {
+  const pr = Math.floor(p.y);
+  let bestScore = 1e9, br = 0, bc = -1;
+  for (let r = pr; r <= pr + 6; r++) {
+    const row = rows.get(r); if (!row) continue;
+    for (let c = 0; c < COLS; c++) {
+      const t = row.t[c]; if (t === T_EMPTY || t >= T_BARRIER) continue;
+      const dx = Math.abs(c + 0.5 - p.x); if (dx > 3.2) continue;
+      if (cellType(c, r - 1) !== T_EMPTY) continue; // 上が空いている（露出した）ブロックだけ
+      const sc = dx + (r - p.y) * 0.6 + (taken.has(r * 64 + c) ? 2.5 : 0);
+      if (sc < bestScore) { bestScore = sc; br = r; bc = c; }
+    }
+  }
+  a.tr = br; a.tc = bc;
+}
+
+function updateAllies(dt) {
+  const n = allies.length; if (!n) return;
+  const taken = new Set();
+  for (const a of allies) if (a.tc >= 0) taken.add(a.tr * 64 + a.tc);
+  const cdBase = Math.max(0.3, 0.6 - 0.02 * level);
+  for (let i = 0; i < n; i++) {
+    const a = allies[i];
+    a.cd -= dt; a.hop = Math.max(0, a.hop - dt * 4); a.search -= dt;
+    if (a.tc >= 0) {
+      const t = cellType(a.tc, a.tr);
+      if (t === T_EMPTY || t >= T_BARRIER || Math.abs(a.tr - p.y) > 7) a.tc = -1;
+    }
+    if (a.search <= 0) {
+      a.search = 0.25 + Math.random() * 0.1;
+      taken.delete(a.tr * 64 + a.tc);
+      findTarget(a, taken);
+      if (a.tc >= 0) taken.add(a.tr * 64 + a.tc);
+    }
+    let tx, ty;
+    if (a.tc >= 0) { tx = a.tc + 0.5; ty = a.tr - 0.3 - a.hop * 0.35; }
+    else { const ang = time * 2 + i * Math.PI * 2 / n; tx = p.x + Math.cos(ang) * 1.1; ty = p.y - 0.7 + Math.sin(ang) * 0.4; }
+    const dx = tx - a.x, dy = ty - a.y, dist = Math.hypot(dx, dy);
+    const step = Math.min(dist, 10 * dt);
+    if (dist > 1e-4) { a.x += dx / dist * step; a.y += dy / dist * step; }
+    if (a.tc >= 0 && dist < 0.2 && a.cd <= 0) {
+      a.cd = cdBase; a.hop = 1;
+      if (damageCell(a.tr, a.tc, allyDmg())) a.tc = -1;
+    }
+  }
+}
+
+// ===================== 更新 =====================
+function updateFx(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const q = particles[i]; q.life -= dt;
+    if (q.life <= 0) { particles.splice(i, 1); continue; }
+    q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+  }
+  for (let i = debris.length - 1; i >= 0; i--) {
+    const q = debris[i]; q.life -= dt;
+    if (q.life <= 0) { debris.splice(i, 1); continue; }
+    q.vy += G * 0.6 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.rot += q.vr * dt;
+  }
+  for (let i = popups.length - 1; i >= 0; i--) { popups[i].life -= dt; popups[i].y -= dt * 1.2; if (popups[i].life <= 0) popups.splice(i, 1); }
+  if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
+  shake = Math.max(0, shake - dt * 2.5);
+  for (const row of rows.values()) for (let c = 0; c < COLS; c++) if (row.fl[c] > 0) row.fl[c] = Math.max(0, row.fl[c] - dt * 6);
+}
+
+function update(dt) {
+  time += dt;
+  updatePlayer(dt);
+  if (state !== 'play') return;
+  updateAllies(dt);
+
+  // カメラ：自動で下へスクロール＋プレイヤー追従（上端で押し潰しはしない）
+  const speed = Math.min(2.2, 0.6 + depth * 0.004);
+  camY += speed * dt;
+  const target = p.y - viewH * 0.38;
+  if (target > camY) camY += (target - camY) * Math.min(1, dt * 8);
+  camY = Math.min(camY, p.y - 1.2);
+  camY = Math.max(camY, 0);
+
+  genUpTo(Math.ceil(camY + viewH) + 8);
+  for (const k of rows.keys()) { if (k < camY - 4) rows.delete(k); else break; }
+}
+
+// ===================== 描画 =====================
+function lerpHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = ((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * t;
+  const g = ((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t;
+  const bl = (pa & 255) + ((pb & 255) - (pa & 255)) * t;
+  return `rgb(${r | 0},${g | 0},${bl | 0})`;
+}
+const BG_STOPS = [[0, '#3d2817'], [150, '#2c1b26'], [300, '#33130b'], [500, '#1c0706']];
+function bgColor() {
+  const d = camY;
+  for (let i = 0; i < BG_STOPS.length - 1; i++) {
+    const [d0, c0] = BG_STOPS[i], [d1, c1] = BG_STOPS[i + 1];
+    if (d < d1) return lerpHex(c0, c1, Math.max(0, (d - d0) / (d1 - d0)));
+  }
+  return BG_STOPS[BG_STOPS.length - 1][1];
+}
+
+function drawPick(spr, cx, cy, size, ang) {
+  const off = size / 2 - size / 9 - (PH / 2) * U * (size / (U * 1.3));
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
+  ctx.drawImage(spr, -size / 2, -size / 2 + off, size, size);
+  ctx.restore();
+}
+
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = bgColor(); ctx.fillRect(0, 0, CW, CH);
+  const sx = shake > 0 ? (Math.random() - 0.5) * shake * U * 0.12 : 0;
+  const sy = shake > 0 ? (Math.random() - 0.5) * shake * U * 0.12 : 0;
+  ctx.setTransform(1, 0, 0, 1, Math.round(sx), Math.round(sy));
+
+  // ブロック
+  const r0 = Math.floor(camY) - 1, r1 = Math.ceil(camY + viewH) + 1;
+  for (let r = r0; r <= r1; r++) {
+    const row = rows.get(r), below = rows.get(r + 1);
+    const y0 = Math.round((r - camY) * U), h = Math.round((r + 1 - camY) * U) - y0;
+    for (let c = 0; c < COLS; c++) {
+      const x0 = Math.round(c * U), w = Math.round((c + 1) * U) - x0;
+      const t = row ? row.t[c] : T_EMPTY;
+      if (t === T_EMPTY) {
+        ctx.drawImage(backTiles[(r * 5 + c * 3) & 3], x0, y0, w, h);
+        if (below && below.t[c] === T_MAGMA) {
+          ctx.globalAlpha = 0.55 + 0.3 * Math.sin(time * 4 + c); ctx.drawImage(glowTile, x0, y0, w, h); ctx.globalAlpha = 1;
+        }
+        continue;
+      }
+      const f = row.fl[c];
+      const ox = f > 0 ? Math.round(Math.sin(f * 30) * f * U * 0.06) : 0;
+      ctx.drawImage(tiles[t][(r * 7 + c * 13) % 3], x0 + ox, y0, w, h);
+      if (t === T_MAGMA) {
+        ctx.globalAlpha = 0.16 + 0.14 * Math.sin(time * 3.3 + c * 1.7 + r); ctx.fillStyle = '#ffe066';
+        ctx.fillRect(x0, y0, w, h); ctx.globalAlpha = 1;
+      } else if (t === T_BARRIER) {
+        ctx.globalAlpha = 0.1 + 0.08 * Math.sin(time * 2.5 + c); ctx.fillStyle = '#b9a2ff';
+        ctx.fillRect(x0, y0, w, h); ctx.globalAlpha = 1;
+      } else {
+        const m = MAXHP[t], hv = row.hp[c];
+        if (hv < m) { const s = Math.min(3, Math.ceil((1 - hv / m) * 3)); ctx.drawImage(cracks[(r + c) & 1][s - 1], x0 + ox, y0, w, h); }
+      }
+      if (f > 0) { ctx.globalAlpha = f * 0.5; ctx.fillStyle = '#ffffff'; ctx.fillRect(x0 + ox, y0, w, h); ctx.globalAlpha = 1; }
+    }
+  }
+
+  // 落下する破片
+  for (const q of debris) {
+    ctx.globalAlpha = Math.min(1, q.life * 1.5);
+    const s = U * 0.75;
+    ctx.save(); ctx.translate(q.x * U, (q.y - camY) * U); ctx.rotate(q.rot);
+    ctx.drawImage(tiles[q.type][q.v], -s / 2, -s / 2, s, s); ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // 仲間
+  const spr = sprites[tier()];
+  for (const a of allies) {
+    drawPick(spr, a.x * U, (a.y - camY) * U, U * 0.62, Math.PI - a.hop * 0.9 + Math.sin(time * 6 + a.id) * 0.08);
+  }
+
+  // プレイヤー
+  if (!p.dead) {
+    const bv = bounceV();
+    const wind = p.vy < 0 ? Math.min(1, -p.vy / bv) * 0.55 : 0;
+    const ang = Math.PI - p.face * wind + Math.max(-0.35, Math.min(0.35, p.vx * 0.05)) + p.swing * 0.12 * p.face;
+    drawPick(spr, p.x * U, (p.y - camY) * U, U * 1.3, ang);
+  }
+
+  // パーティクル
+  for (const q of particles) {
+    ctx.globalAlpha = Math.min(1, q.life / q.max * 1.4);
+    ctx.fillStyle = q.col;
+    const s = Math.max(2, q.size * U);
+    ctx.fillRect(Math.round(q.x * U - s / 2), Math.round((q.y - camY) * U - s / 2), s, s);
+  }
+  ctx.globalAlpha = 1;
+
+  // ポップアップ
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(13 * DPR)}px ${FONT}`;
+  for (const q of popups) {
+    ctx.globalAlpha = Math.min(1, q.life * 2);
+    ctx.lineWidth = 3 * DPR; ctx.strokeStyle = '#000'; ctx.strokeText(q.text, q.x * U, (q.y - camY) * U);
+    ctx.fillStyle = q.col; ctx.fillText(q.text, q.x * U, (q.y - camY) * U);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // 深い所ほど赤い熱気
+  if (camY > 100) {
+    const a = Math.min(0.22, (camY - 100) / 2000);
+    const gr = ctx.createLinearGradient(0, CH * 0.6, 0, CH);
+    gr.addColorStop(0, 'rgba(255,60,0,0)'); gr.addColorStop(1, `rgba(255,60,0,${a})`);
+    ctx.fillStyle = gr; ctx.fillRect(0, CH * 0.6, CW, CH * 0.4);
+  }
+  if (state !== 'title') drawHud();
+}
+
+function drawHud() {
+  const k = DPR, pad = 10 * k, hh = 62 * k;
+  ctx.fillStyle = 'rgba(8,4,2,0.55)'; ctx.fillRect(0, 0, CW, hh);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#c9b39a'; ctx.font = `bold ${11 * k}px ${FONT}`; ctx.fillText('深度', pad, 17 * k);
+  ctx.fillStyle = '#ffffff'; ctx.font = `bold ${26 * k}px ${FONT}`; ctx.fillText(depth + ' m', pad, 46 * k);
+  ctx.textAlign = 'right';
+  const shown = Math.max(best, depth);
+  ctx.fillStyle = '#ffd27a'; ctx.font = `bold ${12 * k}px ${FONT}`; ctx.fillText('ベスト ' + shown + ' m', CW - pad, 17 * k);
+  ctx.fillStyle = '#ffffff'; ctx.font = `bold ${14 * k}px ${FONT}`;
+  ctx.fillText('Lv.' + level + '  ' + STAGES[tier()].name, CW - pad, 35 * k);
+  ctx.fillStyle = '#c9b39a'; ctx.font = `bold ${11 * k}px ${FONT}`;
+  ctx.fillText('仲間 ×' + allies.length, CW - pad, 51 * k);
+  // 次のレベルまで
+  const prog = (depth % LEVEL_STEP) / LEVEL_STEP;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(0, hh - 4 * k, CW, 4 * k);
+  ctx.fillStyle = STAGES[tier()].head; ctx.fillRect(0, hh - 4 * k, CW * prog, 4 * k);
+
+  if (banner) {
+    const a = Math.min(1, banner.t * 1.5), y = CH * 0.32;
+    ctx.globalAlpha = a; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, y - 34 * k, CW, 62 * k);
+    ctx.font = `bold ${24 * k}px ${FONT}`; ctx.lineWidth = 4 * k; ctx.strokeStyle = '#5a1c00';
+    ctx.strokeText(banner.text, CW / 2, y); ctx.fillStyle = '#ffd27a'; ctx.fillText(banner.text, CW / 2, y);
+    ctx.font = `bold ${13 * k}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText(banner.sub, CW / 2, y + 20 * k);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ===================== 画面遷移 =====================
+function startGame() {
+  reset();
+  state = 'play';
+  $('title').classList.add('hidden'); $('over').classList.add('hidden');
+}
+function showOver() {
+  state = 'over';
+  $('oDepth').textContent = depth; $('oBest').textContent = best;
+  $('oLv').textContent = 'Lv.' + level + ' ' + STAGES[tier()].name;
+  $('oRec').classList.toggle('hidden', !newRecord);
+  $('over').classList.remove('hidden');
+}
+$('btnStart').addEventListener('click', startGame);
+$('btnRetry').addEventListener('click', startGame);
+
+// ===================== 入力 =====================
+window.addEventListener('keydown', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') { input.left = true; e.preventDefault(); }
+  else if (e.code === 'ArrowRight' || e.code === 'KeyD') { input.right = true; e.preventDefault(); }
+  else if ((e.code === 'Space' || e.code === 'Enter') && (state === 'title' || state === 'over')) { e.preventDefault(); startGame(); }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
+  else if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+});
+function localX(e) { return e.clientX - cv.getBoundingClientRect().left; }
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const x = localX(e);
+  pointers.set(e.pointerId, { sx: x, dir: x < W / 2 ? -1 : 1 });
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+});
+cv.addEventListener('pointermove', e => {
+  const q = pointers.get(e.pointerId); if (!q) return;
+  const x = localX(e), dx = x - q.sx, TH = 16;
+  if (Math.abs(dx) > TH) { q.dir = Math.sign(dx); q.sx = x - Math.sign(dx) * TH; } // スワイプ方向に追従
+});
+const endPtr = e => pointers.delete(e.pointerId);
+cv.addEventListener('pointerup', endPtr);
+cv.addEventListener('pointercancel', endPtr);
+cv.addEventListener('lostpointercapture', endPtr);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('gesturestart', e => e.preventDefault());
+window.addEventListener('blur', () => { input.left = input.right = false; pointers.clear(); });
+window.addEventListener('resize', resize);
+
+// ===================== メインループ =====================
+let last = performance.now();
+function frame(now) {
+  let dt = (now - last) / 1000; last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (state === 'play') {
+    const steps = dt > 1 / 45 ? 2 : 1;
+    for (let i = 0; i < steps && state === 'play'; i++) update(dt / steps);
+    updateFx(dt);
+  } else if (state === 'dying') {
+    updateFx(dt); deathT += dt;
+    if (deathT > 1.0) showOver();
+  } else {
+    updateFx(dt);
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+resize();
+reset();
+$('tBest').textContent = best;
+requestAnimationFrame(frame);
+
+// テスト用フック
+window.__game = { get state() { return state; }, get depth() { return depth; }, get level() { return level; },
+  get allies() { return allies.length; }, get p() { return p; }, rows, start: startGame };
+})();
+</script>
+</body>
+</html>
